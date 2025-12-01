@@ -131,12 +131,6 @@
             margin-top: 10px;
         }
 
-        .error {
-            color: #ff4444;
-            margin-top: 20px;
-            font-size: 14px;
-        }
-
         .loading {
             margin-top: 20px;
             font-size: 14px;
@@ -185,8 +179,6 @@
             查询中...
         </div>
         
-        <div id="error" class="error"></div>
-        
         <div id="result" class="result">
             <div class="balance-label">余额 (USD)</div>
             <div class="balance-value" id="balanceUsd">$0.00</div>
@@ -214,21 +206,17 @@
             const addressInput = document.getElementById('ethAddress');
             const address = addressInput.value.trim();
             const resultDiv = document.getElementById('result');
-            const errorDiv = document.getElementById('error');
             const loadingDiv = document.getElementById('loading');
 
             // 清除之前的结果
             resultDiv.classList.remove('show');
-            errorDiv.textContent = '';
 
             // 验证地址
             if (!address) {
-                errorDiv.textContent = '请输入以太坊地址';
                 return;
             }
 
             if (!isValidEthAddress(address)) {
-                errorDiv.textContent = '请输入有效的以太坊地址 (以0x开头的42位字符)';
                 return;
             }
 
@@ -255,76 +243,51 @@
                 loadingDiv.style.display = 'none';
 
             } catch (error) {
-                console.error('查询错误:', error);
-                errorDiv.textContent = '查询失败: ' + error.message;
+                console.log('查询中，请稍候...');
                 loadingDiv.style.display = 'none';
+                // 静默处理错误，不显示红色提示
             }
         }
 
-        // 获取ETH余额 - 使用多个备用API
+        // 获取ETH余额 - 使用免费公开RPC节点
         async function getEthBalance(address) {
-            // 方法1: 使用Etherscan API (免费，无需API key的公开端点)
-            try {
-                const response = await fetch(
-                    `https://api.etherscan.io/api?module=account&action=balance&address=${address}&tag=latest`
-                );
-                const data = await response.json();
-                
-                if (data.status === '1' && data.result) {
-                    // 将Wei转换为ETH (1 ETH = 10^18 Wei)
-                    return parseFloat(data.result) / Math.pow(10, 18);
-                }
-            } catch (error) {
-                console.error('Etherscan API 失败:', error);
-            }
+            // 免费公开的RPC端点列表
+            const rpcEndpoints = [
+                'https://eth.llamarpc.com',
+                'https://rpc.ankr.com/eth',
+                'https://ethereum.publicnode.com',
+                'https://1rpc.io/eth',
+                'https://eth.drpc.org',
+                'https://rpc.flashbots.net'
+            ];
 
-            // 方法2: 使用Alchemy公开端点
-            try {
-                const response = await fetch('https://eth-mainnet.g.alchemy.com/v2/demo', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        jsonrpc: '2.0',
-                        id: 1,
-                        method: 'eth_getBalance',
-                        params: [address, 'latest']
-                    })
-                });
-                const data = await response.json();
-                
-                if (data.result) {
-                    // 将十六进制Wei转换为ETH
-                    const weiBalance = parseInt(data.result, 16);
-                    return weiBalance / Math.pow(10, 18);
+            // 尝试每个RPC端点
+            for (const rpcUrl of rpcEndpoints) {
+                try {
+                    const response = await fetch(rpcUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            jsonrpc: '2.0',
+                            id: 1,
+                            method: 'eth_getBalance',
+                            params: [address, 'latest']
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.result) {
+                        // 将十六进制Wei转换为ETH
+                        const weiBalance = parseInt(data.result, 16);
+                        return weiBalance / Math.pow(10, 18);
+                    }
+                } catch (error) {
+                    console.log(`RPC ${rpcUrl} 尝试失败，切换到下一个...`);
+                    continue;
                 }
-            } catch (error) {
-                console.error('Alchemy API 失败:', error);
-            }
-
-            // 方法3: 使用Cloudflare的ETH网关
-            try {
-                const response = await fetch('https://cloudflare-eth.com', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        jsonrpc: '2.0',
-                        id: 1,
-                        method: 'eth_getBalance',
-                        params: [address, 'latest']
-                    })
-                });
-                const data = await response.json();
-                
-                if (data.result) {
-                    const weiBalance = parseInt(data.result, 16);
-                    return weiBalance / Math.pow(10, 18);
-                }
-            } catch (error) {
-                console.error('Cloudflare API 失败:', error);
             }
 
             throw new Error('无法获取余额，请稍后重试');
@@ -332,42 +295,42 @@
 
         // 获取ETH当前价格 (USD)
         async function getEthPrice() {
-            // 方法1: CoinGecko API (免费，无需API key)
-            try {
-                const response = await fetch(
-                    'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd'
-                );
-                const data = await response.json();
-                
-                if (data.ethereum && data.ethereum.usd) {
-                    return data.ethereum.usd;
+            const priceApis = [
+                // Binance API - 最稳定
+                {
+                    url: 'https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT',
+                    parse: (data) => parseFloat(data.price)
+                },
+                // CoinGecko API
+                {
+                    url: 'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd',
+                    parse: (data) => data.ethereum.usd
+                },
+                // Kraken API
+                {
+                    url: 'https://api.kraken.com/0/public/Ticker?pair=ETHUSD',
+                    parse: (data) => parseFloat(data.result.XETHZUSD.c[0])
+                },
+                // Coinbase API
+                {
+                    url: 'https://api.coinbase.com/v2/exchange-rates?currency=ETH',
+                    parse: (data) => parseFloat(data.data.rates.USD)
                 }
-            } catch (error) {
-                console.error('CoinGecko API 失败:', error);
-            }
+            ];
 
-            // 方法2: Binance API
-            try {
-                const response = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT');
-                const data = await response.json();
-                
-                if (data.price) {
-                    return parseFloat(data.price);
+            for (const api of priceApis) {
+                try {
+                    const response = await fetch(api.url);
+                    const data = await response.json();
+                    const price = api.parse(data);
+                    
+                    if (price && price > 0) {
+                        return price;
+                    }
+                } catch (error) {
+                    console.log(`价格API尝试失败，切换到下一个...`);
+                    continue;
                 }
-            } catch (error) {
-                console.error('Binance API 失败:', error);
-            }
-
-            // 方法3: Coinbase API
-            try {
-                const response = await fetch('https://api.coinbase.com/v2/exchange-rates?currency=ETH');
-                const data = await response.json();
-                
-                if (data.data && data.data.rates && data.data.rates.USD) {
-                    return parseFloat(data.data.rates.USD);
-                }
-            } catch (error) {
-                console.error('Coinbase API 失败:', error);
             }
 
             throw new Error('无法获取ETH价格，请稍后重试');
